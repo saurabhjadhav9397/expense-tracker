@@ -171,7 +171,7 @@ def seed_categories():
 
 
 def migrate_existing_schema():
-    """Create new tables and add the two new columns to an older expenses table."""
+    """Create new tables and add missing columns to existing tables."""
     Base.metadata.create_all(engine)
     try:
         insp = inspect(engine)
@@ -312,7 +312,8 @@ def api_logout():
 @csrf.exempt
 def api_me():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     with Session(engine) as db:
         user = db.get(User, uid)
         if not user:
@@ -326,7 +327,6 @@ def api_me():
 @app.post("/api/change-password")
 @csrf.exempt
 def api_change_password():
-    """Change the password of the currently logged-in user."""
     uid, error = api_auth_required()
     if error:
         return error
@@ -363,7 +363,6 @@ def api_change_password():
             db.commit()
             username = user.username
 
-        # Rotate the session so any old session cookie value is invalidated.
         session.clear()
         session["user_id"] = uid
         session["username"] = username
@@ -396,7 +395,6 @@ def percent_change(current, previous):
 
 
 def build_trend(expenses, incomes, months=6):
-    """Income vs expense totals for the last `months` calendar months."""
     today_date = date.today()
     buckets = []
     for offset in range(months - 1, -1, -1):
@@ -458,14 +456,12 @@ def api_dashboard():
     prev_exp_total = float(sum((e.amount for e in prev_expenses), Decimal("0")))
     prev_inc_total = float(sum((i.amount for i in prev_incomes), Decimal("0")))
 
-    # All-time category totals (kept for backwards compatibility) and this-month totals.
     category_totals, month_category_totals = {}, {}
     for e in expenses:
         category_totals[e.category] = round(category_totals.get(e.category, 0) + float(e.amount), 2)
     for e in month_expenses:
         month_category_totals[e.category] = round(month_category_totals.get(e.category, 0) + float(e.amount), 2)
 
-    # Budgets belong to a specific month, so compare them against that month's spending.
     current_budgets = [b for b in budgets if b.year == year and b.month == month]
     total_budget = float(sum((b.amount for b in current_budgets), Decimal("0")))
 
@@ -507,7 +503,6 @@ def api_dashboard():
 
     savings_rate = round((month_inc_total - month_exp_total) / month_inc_total * 100, 1) if month_inc_total > 0 else None
 
-    # Recent activity across both ledgers.
     recent = [{
         "id": e.id, "type": "Expense", "date": e.spent_on.isoformat(),
         "title": e.description, "category": e.category,
@@ -572,7 +567,8 @@ def api_dashboard():
 @csrf.exempt
 def api_transactions():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     q = request.args.get("q", "").strip().lower()
     start = request.args.get("start_date", "").strip()
     end = request.args.get("end_date", "").strip()
@@ -610,18 +606,22 @@ def api_transactions():
 @csrf.exempt
 def api_add_expense():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     try:
         spent_on = date.fromisoformat(request.form.get("date", ""))
         amount = parse_amount(request.form.get("amount"))
         category = request.form.get("category", "").strip()
         description = request.form.get("description", "").strip()
         payment = request.form.get("payment", "UPI").strip()
-        if not category or not description or payment not in ALLOWED_PAYMENT_METHODS: raise ValueError("Complete all expense fields.")
+        if not category or not description or payment not in ALLOWED_PAYMENT_METHODS:
+            raise ValueError("Complete all expense fields.")
         attachment = save_attachment(request.files.get("attachment"))
         with Session(engine) as db:
             e = Expense(spent_on=spent_on, amount=amount, category=category, description=description, payment_method=payment, attachment=attachment)
-            db.add(e); db.commit(); db.refresh(e)
+            db.add(e)
+            db.commit()
+            db.refresh(e)
             return jsonify({"expense": serialize_expense(e)}), 201
     except (ValueError, InvalidOperation) as exc:
         return jsonify({"error": str(exc) or "Invalid expense details."}), 400
@@ -634,10 +634,12 @@ def api_add_expense():
 @csrf.exempt
 def api_get_expense(expense_id):
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     with Session(engine) as db:
         e = db.get(Expense, expense_id)
-        if not e: return jsonify({"error": "Expense not found."}), 404
+        if not e:
+            return jsonify({"error": "Expense not found."}), 404
         return jsonify({"expense": serialize_expense(e)})
 
 
@@ -645,11 +647,13 @@ def api_get_expense(expense_id):
 @csrf.exempt
 def api_update_expense(expense_id):
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     try:
         with Session(engine) as db:
             e = db.get(Expense, expense_id)
-            if not e: return jsonify({"error": "Expense not found."}), 404
+            if not e:
+                return jsonify({"error": "Expense not found."}), 404
             data = request.form if request.form else (request.get_json(silent=True) or {})
             e.spent_on = date.fromisoformat(data.get("date", e.spent_on.isoformat()))
             e.amount = parse_amount(data.get("amount", str(e.amount)))
@@ -659,9 +663,11 @@ def api_update_expense(expense_id):
             if request.files.get("attachment"):
                 if e.attachment:
                     old = os.path.join(app.config["UPLOAD_FOLDER"], e.attachment)
-                    if os.path.exists(old): os.remove(old)
+                    if os.path.exists(old):
+                        os.remove(old)
                 e.attachment = save_attachment(request.files.get("attachment"))
-            db.commit(); db.refresh(e)
+            db.commit()
+            db.refresh(e)
             return jsonify({"expense": serialize_expense(e)})
     except (ValueError, InvalidOperation) as exc:
         return jsonify({"error": str(exc) or "Invalid expense data."}), 400
@@ -671,14 +677,18 @@ def api_update_expense(expense_id):
 @csrf.exempt
 def api_delete_expense(expense_id):
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     with Session(engine) as db:
         e = db.get(Expense, expense_id)
-        if not e: return jsonify({"error": "Expense not found."}), 404
+        if not e:
+            return jsonify({"error": "Expense not found."}), 404
         if e.attachment:
             fp = os.path.join(app.config["UPLOAD_FOLDER"], e.attachment)
-            if os.path.exists(fp): os.remove(fp)
-        db.delete(e); db.commit()
+            if os.path.exists(fp):
+                os.remove(fp)
+        db.delete(e)
+        db.commit()
     return jsonify({"ok": True})
 
 
@@ -688,7 +698,8 @@ def api_delete_expense(expense_id):
 @csrf.exempt
 def api_add_income():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     try:
         data = request.get_json(silent=True) or {}
         received_on = date.fromisoformat(data.get("date", ""))
@@ -696,10 +707,13 @@ def api_add_income():
         source = (data.get("source") or "").strip()
         description = (data.get("description") or "").strip()
         payment = data.get("payment", "Bank Transfer")
-        if not source or not description or payment not in ALLOWED_PAYMENT_METHODS: raise ValueError("Complete all income fields.")
+        if not source or not description or payment not in ALLOWED_PAYMENT_METHODS:
+            raise ValueError("Complete all income fields.")
         with Session(engine) as db:
             i = Income(received_on=received_on, amount=amount, source=source, description=description, payment_method=payment)
-            db.add(i); db.commit(); db.refresh(i)
+            db.add(i)
+            db.commit()
+            db.refresh(i)
             return jsonify({"income": serialize_income(i)}), 201
     except (ValueError, InvalidOperation) as exc:
         return jsonify({"error": str(exc) or "Invalid income details."}), 400
@@ -709,18 +723,21 @@ def api_add_income():
 @csrf.exempt
 def api_update_income(income_id):
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     try:
         data = request.get_json(silent=True) or {}
         with Session(engine) as db:
             i = db.get(Income, income_id)
-            if not i: return jsonify({"error": "Income not found."}), 404
+            if not i:
+                return jsonify({"error": "Income not found."}), 404
             i.received_on = date.fromisoformat(data.get("date", i.received_on.isoformat()))
             i.amount = parse_amount(data.get("amount", str(i.amount)))
             i.source = (data.get("source") or i.source).strip()
             i.description = (data.get("description") or i.description).strip()
             i.payment_method = (data.get("payment") or i.payment_method).strip()
-            db.commit(); db.refresh(i)
+            db.commit()
+            db.refresh(i)
             return jsonify({"income": serialize_income(i)})
     except (ValueError, InvalidOperation) as exc:
         return jsonify({"error": str(exc) or "Invalid income details."}), 400
@@ -730,11 +747,14 @@ def api_update_income(income_id):
 @csrf.exempt
 def api_delete_income(income_id):
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     with Session(engine) as db:
         i = db.get(Income, income_id)
-        if not i: return jsonify({"error": "Income not found."}), 404
-        db.delete(i); db.commit()
+        if not i:
+            return jsonify({"error": "Income not found."}), 404
+        db.delete(i)
+        db.commit()
     return jsonify({"ok": True})
 
 
@@ -744,40 +764,61 @@ def api_delete_income(income_id):
 @csrf.exempt
 def api_budgets():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     with Session(engine) as db:
-        rows=db.scalars(select(Budget).order_by(Budget.year.desc(),Budget.month.desc(),Budget.category)).all()
-        return jsonify({"budgets":[{"id":b.id,"category":b.category,"month":b.month,"year":b.year,"amount":float(b.amount)} for b in rows]})
+        rows = db.scalars(select(Budget).order_by(Budget.year.desc(), Budget.month.desc(), Budget.category)).all()
+        return jsonify({"budgets": [{"id": b.id, "category": b.category, "month": b.month, "year": b.year, "amount": float(b.amount)} for b in rows]})
 
 
 @app.post("/api/budgets")
 @csrf.exempt
 def api_add_budget():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     try:
-        data=request.get_json(silent=True) or {}
-        category=(data.get("category") or "").strip()
-        amount=parse_amount(data.get("amount"))
-        month=int(data.get("month",date.today().month)); year=int(data.get("year",date.today().year))
-        if not category or amount <= 0 or not 1 <= month <= 12: raise ValueError("Enter a valid budget.")
+        data = request.get_json(silent=True) or {}
+        category = (data.get("category") or "").strip()
+        amount = parse_amount(data.get("amount"))
+        month = int(data.get("month", date.today().month))
+        year = int(data.get("year", date.today().year))
+        if not category or amount <= 0 or not 1 <= month <= 12:
+            raise ValueError("Enter a valid budget.")
         with Session(engine) as db:
-            b=Budget(category=category,amount=amount,month=month,year=year); db.add(b); db.commit(); db.refresh(b)
-            return jsonify({"budget":{"id":b.id,"category":b.category,"month":b.month,"year":b.year,"amount":float(b.amount)}}),201
-    except (ValueError,InvalidOperation) as exc:
-        return jsonify({"error":str(exc)}),400
+            b = Budget(category=category, amount=amount, month=month, year=year)
+            db.add(b)
+            db.commit()
+            db.refresh(b)
+            return jsonify({
+                "budget": {
+                    "id": b.id,
+                    "category": b.category,
+                    "month": b.month,
+                    "year": b.year,
+                    "amount": float(b.amount)
+                }
+            }), 201
+    except (ValueError, InvalidOperation) as exc:
+        return jsonify({"error": str(exc) or "Invalid budget details."}), 400
+    except SQLAlchemyError:
+        logger.exception("API budget save failed")
+        return jsonify({"error": "Database error while saving budget."}), 500
 
 
 @app.delete("/api/budgets/<int:budget_id>")
 @csrf.exempt
 def api_delete_budget(budget_id):
-    uid,error=api_auth_required()
-    if error:return error
+    uid, error = api_auth_required()
+    if error:
+        return error
     with Session(engine) as db:
-        b=db.get(Budget,budget_id)
-        if not b:return jsonify({"error":"Budget not found."}),404
-        db.delete(b);db.commit()
-    return jsonify({"ok":True})
+        b = db.get(Budget, budget_id)
+        if not b:
+            return jsonify({"error": "Budget not found."}), 404
+        db.delete(b)
+        db.commit()
+    return jsonify({"ok": True})
 
 
 # ----------------------------- Categories -----------------------------
@@ -785,200 +826,219 @@ def api_delete_budget(budget_id):
 @app.get("/api/categories")
 @csrf.exempt
 def api_categories():
-    uid,error=api_auth_required()
-    if error:return error
+    uid, error = api_auth_required()
+    if error:
+        return error
     with Session(engine) as db:
-        rows=db.scalars(select(Category).order_by(Category.name)).all()
-        return jsonify({"categories":[{"id":c.id,"name":c.name,"icon":c.icon} for c in rows]})
+        cats = db.scalars(select(Category).order_by(Category.name)).all()
+        return jsonify({"categories": [{"id": c.id, "name": c.name, "icon": c.icon} for c in cats]})
 
 
 @app.post("/api/categories")
 @csrf.exempt
 def api_add_category():
-    uid,error=api_auth_required()
-    if error:return error
-    data=request.get_json(silent=True) or {}
-    name=(data.get("name") or "").strip()
-    if not name:return jsonify({"error":"Category name is required."}),400
-    with Session(engine) as db:
-        if db.scalar(select(Category).where(func.lower(Category.name)==name.lower())):
-            return jsonify({"error":"Category already exists."}),409
-        c=Category(name=name,icon="•");db.add(c);db.commit();db.refresh(c)
-        return jsonify({"category":{"id":c.id,"name":c.name,"icon":c.icon}}),201
+    uid, error = api_auth_required()
+    if error:
+        return error
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    icon = (data.get("icon") or "•").strip()
+    if not name:
+        return jsonify({"error": "Category name is required."}), 400
+    try:
+        with Session(engine) as db:
+            c = Category(name=name, icon=icon)
+            db.add(c)
+            db.commit()
+            db.refresh(c)
+            return jsonify({"category": {"id": c.id, "name": c.name, "icon": c.icon}}), 201
+    except IntegrityError:
+        return jsonify({"error": "Category already exists."}), 409
+    except SQLAlchemyError:
+        logger.exception("Category save failed")
+        return jsonify({"error": "Database error while adding category."}), 500
 
 
-@app.delete("/api/categories/<int:category_id>")
-@csrf.exempt
-def api_delete_category(category_id):
-    uid,error=api_auth_required()
-    if error:return error
-    with Session(engine) as db:
-        c=db.get(Category,category_id)
-        if not c:return jsonify({"error":"Category not found."}),404
-        db.delete(c);db.commit()
-    return jsonify({"ok":True})
-
-
-# ----------------------------- Profile -----------------------------
+# ----------------------------- Profile / Settings -----------------------------
 
 @app.get("/api/profile")
 @csrf.exempt
-def api_profile():
+def api_get_profile():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     with Session(engine) as db:
-        return jsonify({"user": serialize_user(db.get(User, uid)), "currencies": [{"code": k, "name": v} for k,v in CURRENCY_NAMES.items()]})
+        user = db.get(User, uid)
+        if not user:
+            return jsonify({"error": "User not found."}), 404
+        return jsonify({
+            "user": serialize_user(user),
+            "currencies": CURRENCY_NAMES,
+        })
 
 
 @app.patch("/api/profile")
 @csrf.exempt
 def api_update_profile():
     uid, error = api_auth_required()
-    if error: return error
+    if error:
+        return error
     data = request.get_json(silent=True) or {}
     full_name = (data.get("full_name") or "").strip()
-    currency = (data.get("currency") or "INR").upper()
-    if not full_name or currency not in CURRENCIES:
-        return jsonify({"error": "Full name and a valid currency are required."}), 400
+    currency = (data.get("currency") or "INR").strip().upper()
+
+    if currency not in CURRENCIES:
+        return jsonify({"error": "Unsupported currency code."}), 400
+
+    try:
+        with Session(engine) as db:
+            user = db.get(User, uid)
+            if not user:
+                return jsonify({"error": "User not found."}), 404
+            if full_name:
+                user.full_name = full_name
+            user.currency_code = currency
+            db.commit()
+            db.refresh(user)
+            return jsonify({"user": serialize_user(user)})
+    except SQLAlchemyError:
+        logger.exception("Profile update failed")
+        return jsonify({"error": "Database error while updating profile."}), 500
+
+
+# ----------------------------- Exports (PDF & Excel) -----------------------------
+
+@app.get("/api/export/excel")
+@csrf.exempt
+def api_export_excel():
+    uid, error = api_auth_required()
+    if error:
+        return error
+
+    wb = Workbook()
+    
+    ws_exp = wb.active
+    ws_exp.title = "Expenses"
+    ws_exp.append(["ID", "Date", "Category", "Description", "Payment Method", "Amount"])
+
+    ws_inc = wb.create_sheet(title="Income")
+    ws_inc.append(["ID", "Date", "Source", "Description", "Payment Method", "Amount"])
+
+    with Session(engine) as db:
+        expenses = db.scalars(select(Expense).order_by(Expense.spent_on.desc())).all()
+        incomes = db.scalars(select(Income).order_by(Income.received_on.desc())).all()
+
+        for e in expenses:
+            ws_exp.append([e.id, e.spent_on.isoformat(), e.category, e.description, e.payment_method, float(e.amount)])
+
+        for i in incomes:
+            ws_inc.append([i.id, i.received_on.isoformat(), i.source, i.description, i.payment_method, float(i.amount)])
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    return send_file(
+        buffer,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"financial_report_{date.today().isoformat()}.xlsx"
+    )
+
+
+@app.get("/api/export/pdf")
+@csrf.exempt
+def api_export_pdf():
+    uid, error = api_auth_required()
+    if error:
+        return error
+
     with Session(engine) as db:
         user = db.get(User, uid)
-        user.full_name = full_name
-        user.currency_code = currency
-        db.commit(); db.refresh(user)
-        session["username"] = user.username
-        return jsonify({"user": serialize_user(user)})
+        expenses = db.scalars(select(Expense).order_by(Expense.spent_on.desc())).all()
+        incomes = db.scalars(select(Income).order_by(Income.received_on.desc())).all()
 
-
-# ----------------------------- Reports -----------------------------
-
-@app.get("/api/reports")
-@csrf.exempt
-def api_reports():
-    uid, error = api_auth_required()
-    if error: return error
-    with Session(engine) as db:
-        expenses = db.scalars(select(Expense).order_by(Expense.spent_on)).all()
-        incomes = db.scalars(select(Income).order_by(Income.received_on)).all()
-    monthly, monthly_income, categories = {}, {}, {}
-    for e in expenses:
-        key=e.spent_on.strftime("%Y-%m"); monthly[key]=monthly.get(key,0)+float(e.amount); categories[e.category]=categories.get(e.category,0)+float(e.amount)
-    for i in incomes:
-        key=i.received_on.strftime("%Y-%m"); monthly_income[key]=monthly_income.get(key,0)+float(i.amount)
-    keys=sorted(set(monthly)|set(monthly_income))
-    return jsonify({"monthly": {k: monthly.get(k,0) for k in keys}, "monthly_income": {k: monthly_income.get(k,0) for k in keys}, "categories": categories})
-
-
-@app.get("/reports/export.xlsx")
-def export_xlsx():
-    if not session.get("user_id"):
-        return jsonify({"error": "Authentication required"}), 401
-    with Session(engine) as db:
-        expenses = db.scalars(select(Expense).order_by(Expense.spent_on)).all()
-        incomes = db.scalars(select(Income).order_by(Income.received_on)).all()
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Expenses"
-    ws.append(["Date", "Category", "Description", "Payment Method", "Amount", "Attachment"])
-    for e in expenses:
-        ws.append([e.spent_on, e.category, e.description, e.payment_method, float(e.amount), e.attachment or ""])
-    wi = wb.create_sheet("Income")
-    wi.append(["Date", "Source", "Description", "Payment Method", "Amount"])
-    for i in incomes:
-        wi.append([i.received_on, i.source, i.description, i.payment_method, float(i.amount)])
-    for sheet in wb.worksheets:
-        for col in sheet.columns:
-            letter = col[0].column_letter
-            sheet.column_dimensions[letter].width = min(max(len(str(x.value or "")) for x in col) + 2, 45)
-        sheet.freeze_panes = "A2"
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-    return send_file(output, as_attachment=True, download_name=f"expense_tracker_{date.today():%Y%m%d}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-
-def generate_statement_pdf(title, period, expenses, filename):
+    currency_sym = CURRENCIES.get(user.currency_code if user else "INR", "₹")
     buffer = BytesIO()
-    document = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm, title=title, author="Expense Tracker")
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("StatementTitle", parent=styles["Title"], fontSize=18, leading=22, alignment=TA_CENTER, spaceAfter=6)
-    normal = ParagraphStyle("Normal9", parent=styles["Normal"], fontSize=9, leading=12)
-    elements = [Paragraph("EXPENSE TRACKER", title_style), Paragraph(title, ParagraphStyle("Sub", parent=title_style, fontSize=14)), Paragraph(f"Period: {period}", ParagraphStyle("Period", parent=normal, alignment=TA_CENTER, spaceAfter=12))]
-    total = money(sum((e.amount for e in expenses), Decimal("0")))
-    elements.append(Table([["Total Expenses", "Transactions"], [f"₹ {total:,.2f}", str(len(expenses))]], colWidths=[85*mm, 85*mm], style=TableStyle([("GRID",(0,0),(-1,-1),.5,colors.grey),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf1ff")),("LEFTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),7)])))
-    elements.append(Spacer(1, 8*mm))
-    data = [["Date", "Category", "Description", "Payment", "Amount"]]
-    for e in expenses:
-        data.append([e.spent_on.strftime("%d-%m-%Y"), e.category, e.description, e.payment_method, f"₹ {e.amount:,.2f}"])
-    if not expenses:
-        data.append(["No expenses recorded.", "", "", "", ""])
-    table = Table(data, colWidths=[25*mm, 32*mm, 65*mm, 28*mm, 30*mm], repeatRows=1)
-    table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.5,colors.grey),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf1ff")),("ALIGN",(4,1),(4,-1),"RIGHT"),("VALIGN",(0,0),(-1,-1),"TOP"),("FONTSIZE",(0,0),(-1,-1),8),("LEFTPADDING",(0,0),(-1,-1),4),("RIGHTPADDING",(0,0),(-1,-1),4)]))
-    elements += [table, Spacer(1, 8*mm), Paragraph("Generated by Expense Tracker", ParagraphStyle("Footer", parent=normal, alignment=TA_CENTER, textColor=colors.grey))]
-    document.build(elements)
+
+    elements = []
+    
+    title_style = ParagraphStyle(
+        'ReportTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        spaceAfter=12,
+        textColor=colors.HexColor("#1e293b")
+    )
+    elements.append(Paragraph(f"Financial Statement - {user.full_name or user.username if user else 'User'}", title_style))
+    elements.append(Paragraph(f"Generated on: {date.today().strftime('%B %d, %Y')}", styles['Normal']))
+    elements.append(Spacer(1, 15))
+
+    total_exp = sum((e.amount for e in expenses), Decimal("0"))
+    total_inc = sum((i.amount for i in incomes), Decimal("0"))
+    net_bal = total_inc - total_exp
+
+    summary_data = [
+        ["Total Income", "Total Expenses", "Net Balance"],
+        [f"{currency_sym} {total_inc:,.2f}", f"{currency_sym} {total_exp:,.2f}", f"{currency_sym} {net_bal:,.2f}"]
+    ]
+    summary_table = Table(summary_data, colWidths=[60*mm, 60*mm, 60*mm])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor("#334155")),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 20))
+
+    elements.append(Paragraph("Recent Expenses", styles['Heading2']))
+    elements.append(Spacer(1, 8))
+    
+    exp_data = [["Date", "Category", "Description", "Payment", f"Amount ({currency_sym})"]]
+    for e in expenses[:50]:
+        exp_data.append([
+            e.spent_on.isoformat(),
+            e.category,
+            e.description[:30],
+            e.payment_method,
+            f"{e.amount:,.2f}"
+        ])
+
+    exp_table = Table(exp_data, colWidths=[25*mm, 35*mm, 60*mm, 30*mm, 30*mm])
+    exp_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0284c7")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-2, -1), 'LEFT'),
+        ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]))
+    elements.append(exp_table)
+
+    doc.build(elements)
     buffer.seek(0)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"financial_report_{date.today().isoformat()}.pdf"
+    )
 
 
-@app.get("/statements/range/pdf")
-def statement_range_pdf():
-    if not session.get("user_id"):
-        return jsonify({"error": "Authentication required"}), 401
+# ----------------------------- App Initialization -----------------------------
+
+with app.app_context():
     try:
-        sm, sy, em, ey = int(request.args["start_month"]), int(request.args["start_year"]), int(request.args["end_month"]), int(request.args["end_year"])
-        start = date(sy, sm, 1)
-        end = date(ey + 1, 1, 1) if em == 12 else date(ey, em + 1, 1)
-        if start > date(ey, em, 1): raise ValueError
-    except (ValueError, KeyError):
-        return jsonify({"error": "Invalid statement range."}), 400
-    with Session(engine) as db:
-        expenses = db.scalars(select(Expense).where(Expense.spent_on >= start, Expense.spent_on < end).order_by(Expense.spent_on, Expense.id)).all()
-    return generate_statement_pdf("Expense Statement", f"{start:%B %Y} - {date(ey, em, 1):%B %Y}", expenses, f"expense_statement_{sy}_{sm:02d}_to_{ey}_{em:02d}.pdf")
-
-
-@app.get("/statements/monthly/pdf")
-def monthly_statement_pdf():
-    if not session.get("user_id"):
-        return jsonify({"error": "Authentication required"}), 401
-    try:
-        year, month = int(request.args.get("year", date.today().year)), int(request.args.get("month", date.today().month))
-        start = date(year, month, 1)
-        end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-    except ValueError:
-        return jsonify({"error": "Invalid month or year."}), 400
-    with Session(engine) as db:
-        expenses = db.scalars(select(Expense).where(Expense.spent_on >= start, Expense.spent_on < end).order_by(Expense.spent_on, Expense.id)).all()
-    return generate_statement_pdf("Monthly Expense Statement", f"{start:%B %Y}", expenses, f"expense_statement_{year}_{month:02d}.pdf")
-
-
-@app.get("/statements/yearly/pdf")
-def yearly_statement_pdf():
-    if not session.get("user_id"):
-        return jsonify({"error": "Authentication required"}), 401
-    try:
-        sy, ey = int(request.args.get("start_year", date.today().year)), int(request.args.get("end_year", date.today().year))
-        if sy > ey: raise ValueError
-        start, end = date(sy, 1, 1), date(ey + 1, 1, 1)
-    except ValueError:
-        return jsonify({"error": "Invalid year range."}), 400
-    with Session(engine) as db:
-        expenses = db.scalars(select(Expense).where(Expense.spent_on >= start, Expense.spent_on < end).order_by(Expense.spent_on, Expense.id)).all()
-    return generate_statement_pdf("Year Range Expense Statement", f"{sy} - {ey}", expenses, f"expense_statement_{sy}_{ey}.pdf")
-
-
-@app.errorhandler(413)
-def too_large(_):
-    return jsonify({"error": "Uploaded file is too large. Maximum size is 4 MB."}), 413
-
-
-def initialize_database():
-    migrate_existing_schema()
-
-
-def main():
-    initialize_database()
-    print(f"Expense Tracker API is running at http://{HOST}:{PORT}")
-    app.run(host=HOST, port=PORT, debug=False)
-
+        migrate_existing_schema()
+    except Exception:
+        logger.exception("Failed to initialize database schema on startup.")
 
 if __name__ == "__main__":
-    main()
+    app.run(host=HOST, port=PORT, debug=os.environ.get("FLASK_DEBUG", "0") == "1")
